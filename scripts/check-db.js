@@ -81,6 +81,21 @@ async function checkV1Tables() {
   }
 }
 
+// Add this function before your migrate deploy
+async function resolveMigration() {
+  try {
+    console.log('🔧 Checking for failed migrations...');
+    execSync('npx prisma migrate resolve --applied 09_update_hostname_region', {
+      stdio: 'inherit',
+      cwd: process.cwd(),
+    });
+    console.log('✅ Migration resolved successfully');
+  } catch (error) {
+    console.log('ℹ️ Migration resolve not needed or failed, continuing...');
+    // Don't throw - let it continue to migrate deploy
+  }
+}
+
 async function applyMigration() {
   if (!process.env.SKIP_DB_MIGRATION) {
     console.log(execSync('prisma migrate deploy').toString());
@@ -91,7 +106,14 @@ async function applyMigration() {
 
 (async () => {
   let err = false;
-  for (let fn of [checkEnv, checkConnection, checkDatabaseVersion, checkV1Tables, applyMigration]) {
+  for (let fn of [
+    checkEnv,
+    checkConnection,
+    checkDatabaseVersion,
+    checkV1Tables,
+    resolveMigration,
+    applyMigration,
+  ]) {
     try {
       await fn();
     } catch (e) {
