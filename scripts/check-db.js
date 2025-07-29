@@ -96,6 +96,38 @@ async function checkV1Tables() {
 //   }
 // }
 
+async function fixMigrationState() {
+  try {
+    // Check if column exists
+    const columnExists = await prisma.$queryRaw`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'website_event' 
+        AND column_name = 'hostname'
+      );
+    `;
+
+    console.log('Hostname column exists:', columnExists[0].exists);
+
+    // Check migration status
+    const migration = await prisma.$queryRaw`
+      SELECT * FROM _prisma_migrations 
+      WHERE migration_name = '09_update_hostname_region';
+    `;
+
+    console.log('Migration status:', migration);
+
+    if (columnExists[0].exists && migration.length === 0) {
+      console.log('Column exists but migration not recorded. This is the issue!');
+      // You could manually insert the migration record here if needed
+    }
+  } catch (error) {
+    console.error('Error:', error);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 async function applyMigration() {
   if (!process.env.SKIP_DB_MIGRATION) {
     console.log(execSync('prisma migrate deploy').toString());
@@ -112,6 +144,7 @@ async function applyMigration() {
     checkDatabaseVersion,
     checkV1Tables,
     // resolveMigration,
+    fixMigrationState,
     applyMigration,
   ]) {
     try {
