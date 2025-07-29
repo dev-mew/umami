@@ -81,127 +81,45 @@ async function checkV1Tables() {
   }
 }
 
-async function fixMigrationState() {
+async function fixMissingRegionColumn() {
   try {
-    console.log('🔄 Starting migration state fix...');
+    console.log('🔄 Checking for missing region column...');
 
-    // Step 1: Check for confused migration records
-    console.log('1️⃣ Checking migration state...');
-    const existingMigrations = await prisma.$queryRaw`
-      SELECT * FROM _prisma_migrations 
-      WHERE migration_name = '09_update_hostname_region'
-      ORDER BY started_at DESC
-    `;
-
-    console.log(`   Found ${existingMigrations.length} existing migration records`);
-
-    // Step 2: Check if hostname column exists
-    console.log('2️⃣ Checking if hostname column exists...');
-    const columnExists = await prisma.$queryRaw`
+    // Check if region column exists in session table
+    const regionExists = await prisma.$queryRaw`
       SELECT EXISTS (
         SELECT 1 FROM information_schema.columns 
-        WHERE table_name = 'website_event' 
-        AND column_name = 'hostname'
+        WHERE table_name = 'session' 
+        AND column_name = 'region'
       ) as exists
     `;
 
-    const exists = columnExists[0]?.exists;
-    console.log(`   Column exists: ${exists}`);
+    const regionCol = regionExists[0]?.exists;
+    console.log(`   Region column exists: ${regionCol}`);
 
-    // Step 3: Determine if we need to fix anything
-    const hasValidMigration = existingMigrations.some(
-      m => m.finished_at && m.applied_steps_count > 0 && !m.rolled_back_at,
-    );
+    if (!regionCol) {
+      console.log('   Adding region column to session table...');
+      await prisma.$executeRaw`
+        ALTER TABLE "session" 
+        ADD COLUMN "region" VARCHAR(20)
+      `;
+      success('Region column added successfully!');
+    } else {
+      console.log('   ✅ Region column already exists, skipping...');
+    }
 
-    if (exists && hasValidMigration) {
-      console.log('✅ Migration state is already correct, skipping fix');
+    return true;
+  } catch (error) {
+    console.error('❌ Error adding region column:', error.message);
+
+    // If column already exists, that's fine
+    if (error.message.includes('already exists') || error.message.includes('duplicate column')) {
+      success('Region column already exists');
       return true;
     }
 
-    // Step 4: Clear confused migration records
-    if (existingMigrations.length > 0) {
-      console.log('3️⃣ Clearing confused migration records...');
-      await prisma.$executeRaw`
-        DELETE FROM _prisma_migrations 
-        WHERE migration_name = '09_update_hostname_region'
-      `;
-      console.log('   ✓ Cleared migration records');
-    }
-
-    // Step 5: Add column if it doesn't exist
-    if (!exists) {
-      console.log('4️⃣ Adding hostname column...');
-      await prisma.$executeRaw`
-        ALTER TABLE "website_event" 
-        ADD COLUMN "hostname" VARCHAR(100)
-      `;
-      console.log('   ✓ Hostname column added successfully');
-    } else {
-      console.log('4️⃣ Hostname column already exists, skipping...');
-    }
-
-    // Step 6: Mark migration as properly applied
-    console.log('5️⃣ Marking migration as applied...');
-    await prisma.$executeRaw`
-      INSERT INTO _prisma_migrations (
-        id, 
-        checksum, 
-        finished_at, 
-        migration_name, 
-        logs, 
-        rolled_back_at, 
-        started_at, 
-        applied_steps_count
-      ) VALUES (
-        gen_random_uuid(),
-        'e94d9993b17ac5c330ae3f872fd5869fb8095a3f3a7d31d2aaade73dc45fbe9c',
-        NOW(),
-        '09_update_hostname_region',
-        '',
-        NULL,
-        NOW(),
-        1
-      )
-    `;
-    console.log('   ✓ Migration marked as successfully applied');
-
-    success('Migration state fix completed successfully!');
-    return true;
-  } catch (error) {
-    console.error('❌ Error during migration fix:', error.message);
-
-    // If we get a "column already exists" error, that's actually good
-    if (error.message.includes('already exists') || error.message.includes('duplicate column')) {
-      console.log('   ℹ️  Column already exists, attempting to mark migration as applied...');
-      try {
-        // Clear any existing records first
-        await prisma.$executeRaw`
-          DELETE FROM _prisma_migrations 
-          WHERE migration_name = '09_update_hostname_region'
-        `;
-
-        // Mark as applied
-        await prisma.$executeRaw`
-          INSERT INTO _prisma_migrations (
-            id, checksum, finished_at, migration_name, logs, 
-            rolled_back_at, started_at, applied_steps_count
-          ) VALUES (
-            gen_random_uuid(),
-            'e94d9993b17ac5c330ae3f872fd5869fb8095a3f3a7d31d2aaade73dc45fbe9c',
-            NOW(), '09_update_hostname_region', '', NULL, NOW(), 1
-          )
-        `;
-        success('Migration marked as applied despite existing column');
-        return true;
-      } catch (secondError) {
-        error('Failed to mark migration as applied: ' + secondError.message);
-        // Don't throw - let the normal migration process handle it
-        return false;
-      }
-    }
-
-    // For other errors, log but don't fail the entire process
-    console.log('   ⚠️  Migration fix failed, but continuing with normal migration process...');
+    // For other errors, log but don't fail the deployment
+    console.log('   ⚠️  Could not add region column, but continuing...');
     return false;
   }
 }
@@ -221,7 +139,7 @@ async function applyMigration() {
     checkConnection,
     checkDatabaseVersion,
     checkV1Tables,
-    fixMigrationState,
+    fixMissingRegionColumn,
     applyMigration,
   ]) {
     try {
